@@ -1,0 +1,9 @@
+T_ST
+T_CT
+T_SS
+T_CS
+num. of discrete points (M)
+num. of lanes (A+B: idx 0 to A+B-1)
+num. of exit lanes (B: idx A to A+B-1)
+num. of vehicles (N)
+<vehicle id> <incoming lane> <to exit (e_i)> <earliest arrival time>

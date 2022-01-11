@@ -19,7 +19,7 @@ public:
     ~Manager() {}
     void parseInput(fstream&);
     void plan();
-    void writeOutput(fstream&) {};
+    void writeOutput(fstream&);
 private:
     // Members
     vector<Vehicle*> _vehicles;
@@ -56,14 +56,43 @@ private:
     void _disableTrajectory(Vehicle* v, bool print = PRINT);
     void _addPsuedoSource(bool print = PRINT);
     void _printExtractedGraph();
+    // For First-Come-First-Serve
+    void _extractInitialSolutionFCFS(bool print = PRINT);
+    void _determineChangePointsFCFS(Vehicle* v, bool print = PRINT);
 
     // Compute Longest Passing Time
     double _computeCost(bool print = PRINT);
     void   _topologicalSort(vector<Node*>&, bool print = PRINT);
     void   _topologicalSortUtil(Node*, bool [], stack<Node*>&);
-    void   _updateBestSolution();
     
-    //permutation
+    // Solution
+    void _updateBestSolution();
+    void _restoreBestSolution();  
+    
+    // Simulated Annealing
+    void _simulatedAnnealing(bool print = PRINT);
+    void _findGreatStartPoint(bool print = PRINT);
+    void _permutation(bool print = PRINT);
+    void _changeOnePath(Vehicle*&, bool print = PRINT);
+    void _changeOnePriority(Lane*&, int&, bool print = PRINT);
+    bool _isPriorityChangingValid(Lane*, int, bool print = PRINT);
+    void _modifyOrder(Lane*, int, bool print = PRINT);
+    void _changeOneCrossLaneConstraint(bool print = PRINT);
+
+    // Output
+    static bool _compareForOutput(const Node* a, const Node* b){
+        if(a->_lane == -1) return true;
+        if(b->_lane == -1) return false;
+        if(a->_vehicle->_id < b->_vehicle->_id){
+            return true;
+        }
+        if(a->_vehicle->_id == b->_vehicle->_id){
+            if(a->_point < b->_point){
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 #endif //MANAGER_H

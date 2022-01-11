@@ -54,7 +54,6 @@ void Manager::parseInput(fstream& input) {
         }
     }
 }
-
 void Manager::plan() {
     double bestCost = numeric_limits<double>::max();
     double currCost;
@@ -62,11 +61,28 @@ void Manager::plan() {
     _initialize();
     cout << "Extract initial solution...\n";
     _extractInitialSolution(false);
-    cout << "Compute cost...\n";
-    currCost = _computeCost(true);
+    //_extractInitialSolutionFCFS(false);
+    cout << "Compute initial cost...";
+    currCost = _computeCost(false);
     if(currCost < bestCost){
         bestCost = min(currCost, bestCost);
         _updateBestSolution();
+    }
+    cout << "Initial Cost = " << bestCost << "\n";
+    cout << "Perform simulated annealing...\n";
+    //_findGreatStartPoint(true);
+    _simulatedAnnealing(true);
+}
+void Manager::writeOutput(fstream& out){
+    sort(_bestSolution.begin(), _bestSolution.end(), _compareForOutput);
+    int idx = 1;
+    for(int i=0; i<_numVehicles; ++i){
+        out << _vehicles[i]->_id << " ";
+        for(int k=0; k<_numDiscretePoints; ++k){
+            out << "(" << _bestSolution[idx]->_vehicle->_id << "," << _bestSolution[idx]->_lane << "," << _bestSolution[idx]->_bestArrivalTime << ") ";
+            ++idx;
+        }
+        out << "\n";
     }
 }
 
@@ -96,7 +112,7 @@ void Manager::_initialize() {
     _initializeCrossLaneConstraint();
 }
 void Manager::_initializeNodes(Vehicle* v, bool print){
-    if(print) cout << "Vehicle " << v->_id << "\n";
+    if(print) cout << "Vehicle " << v->_id << " " << v->_type << "\n";
     if(v->_type == Trajectory_type::ON_TO_OFF){
         int firstExitLane = _numRemainLanes;
         int crossLane = firstExitLane - v->_incomingLane + 1;
@@ -165,7 +181,7 @@ void Manager::_initializeNodes(Vehicle* v, bool print){
         }
         for(int h=firstRemainLane-1; h>=0; --h){
             vector<Node*> laneOfNodes;
-            for(int k=_numDiscretePoints-crossLane+(firstRemainLane-1)-h; k<_numDiscretePoints; ++k){
+            for(int k=v->_incomingLane-h; k<_numDiscretePoints; ++k){
                 Node* node = new Node(h, k, v);
                 _lanes[h]->_points[k]->_vehicleID2Node[v->_id] = node;
                 laneOfNodes.push_back(node);
@@ -369,7 +385,15 @@ void Manager::_extractInitialSolution(bool print){
         _enableTrajectory(_vehicles[i], print);
     }
     _addPsuedoSource(print);
-    _printExtractedGraph();
+    if(print) _printExtractedGraph();
+}
+void Manager::_extractInitialSolutionFCFS(bool print){
+    for(int i=0; i<_numVehicles; ++i){
+        _determineChangePointsFCFS(_vehicles[i], print);
+        _enableTrajectory(_vehicles[i], print);
+    }
+    _addPsuedoSource(print);
+    if(print) _printExtractedGraph();
 }
 void Manager::_determineChangePoints(Vehicle* v, bool print){
     if(print) cout << "Vehicle " << v->_id << ":\n";
@@ -441,6 +465,37 @@ void Manager::_determineChangePoints(Vehicle* v, bool print){
             int changePoint = rand() % (end - start + 1) + start;
             v->_changePoints.push_back(changePoint);
             curr = changePoint + 1;
+        }
+        if(print){
+            for(size_t k=0; k<v->_changePoints.size(); ++k){
+                cout << "(" << v->_incomingLane-k << "," << v->_changePoints[k] << ") ";
+            }
+        }
+    }
+    if(print) cout << "\n";
+}
+void Manager::_determineChangePointsFCFS(Vehicle* v, bool print){
+    if(print) cout << "Vehicle " << v->_id << ":\n";
+    v->_changePoints.clear();
+    v->_changePoints.resize(0);
+    if(v->_type == Trajectory_type::ON_TO_OFF){
+        for(int h=v->_incomingLane; h<_numRemainLanes; ++h){
+            int idx = h - v->_incomingLane;
+            v->_changePoints.push_back(idx);
+        }
+        if(print){
+            for(size_t k=0; k<v->_changePoints.size(); ++k){
+                cout << "(" << k+v->_incomingLane << "," << v->_changePoints[k] << ") ";
+            }
+        }
+    }
+    else if(v->_type == Trajectory_type::OFF_TO_OFF){
+        //no change
+    }
+    else if(v->_type == Trajectory_type::OFF_TO_ON){
+        for(int h=v->_incomingLane; h>=_numRemainLanes; --h){
+            int idx = v->_incomingLane - h;
+            v->_changePoints.push_back(idx);
         }
         if(print){
             for(size_t k=0; k<v->_changePoints.size(); ++k){
@@ -652,11 +707,238 @@ void Manager::_topologicalSortUtil(Node* node, bool visited[], stack<Node*>& s){
     }
     s.push(node);
 }
+
 void Manager::_updateBestSolution(){
     _bestSolution.clear();
     _bestSolution.resize(0);
     for(auto ite=_extractedNodes.begin(); ite!=_extractedNodes.end(); ++ite){
         _bestSolution.push_back(*ite);
         (*ite)->_bestArrivalTime = (*ite)->_arrivalTime;
+        //cout << "Store node (";
+        //(*ite)->print();
+        //cout << ") arrival time =" << (*ite)->_bestArrivalTime << "\n";
     }
+    for(int i=0; i<_numVehicles; ++i){
+        _vehicles[i]->_bestChangePoints.clear();
+        _vehicles[i]->_bestChangePoints.resize(0);
+        for(size_t k=0; k<_vehicles[i]->_changePoints.size(); ++k){
+            _vehicles[i]->_bestChangePoints.push_back(_vehicles[i]->_changePoints[k]);
+        }
+    }
+}
+void Manager::_restoreBestSolution(){
+    for(int i=0; i<_numVehicles; ++i){
+        _vehicles[i]->_changePoints.clear();
+        _vehicles[i]->_changePoints.resize(0);
+        for(size_t k=0; k<_vehicles[i]->_bestChangePoints.size(); ++k){
+            _vehicles[i]->_changePoints.push_back(_vehicles[i]->_bestChangePoints[k]);
+        }
+        _disableTrajectory(_vehicles[i]);
+        _enableTrajectory(_vehicles[i]);
+    }
+}
+
+void Manager::_simulatedAnnealing(bool print){
+    //_permutation(print);
+    double cost = _computeCost();
+    double bestCost = cost;
+    for(int i=0; i<500; ++i){
+        double prob = rand() / (RAND_MAX + 1.0);
+        if(prob < 0.2){ //change path
+            Vehicle* toChange;
+            if(print) cout << "Change path. ";
+            _changeOnePath(toChange);
+            double new_cost = _computeCost();
+            if(new_cost < bestCost){
+                bestCost = new_cost;
+                cost = new_cost;
+                _updateBestSolution();
+                if(print) cout << "Best cost = " << bestCost << ", New cost = " << new_cost << ". Update best cost.\n";
+            }
+            else if(new_cost < cost + 0.000001){
+                cost = new_cost;
+                if(print) cout << "Best cost = " << bestCost << ", New cost = " << new_cost << ". Accept.\n";
+            }
+            else{
+                prob = rand() / (RAND_MAX + 1.0);
+                if(prob < 0.2){
+                    if(print) cout << "Best cost = " << bestCost << ", New cost = " << new_cost << ". Accept with probability.\n";
+                }
+                else{
+                    if(print) cout << "Best cost = " << bestCost << ", New cost = " << new_cost << ". Reject.\n";
+                    toChange->_changePoints.clear();
+                    toChange->_changePoints.resize(0);
+                    for(size_t k=0; k<toChange->_prevChangePoints.size(); ++k){
+                        toChange->_changePoints.push_back(toChange->_prevChangePoints[k]);
+                    }
+                }
+            }
+        }
+        else{ //change priority
+            if(print) cout << "Change prio. ";
+            Lane* toChange;
+            int idx;
+            _changeOnePriority(toChange, idx);
+            double new_cost = _computeCost();
+            if(new_cost < bestCost){
+                bestCost = new_cost;
+                cost = new_cost;
+                _updateBestSolution();
+                if(print) cout << "Best cost = " << bestCost << ", New cost = " << new_cost << ". Update best cost.\n";
+            }
+            else if(new_cost < cost + 0.000001){
+                cost = new_cost;
+                if(print) cout << "Best cost = " << bestCost << ", New cost = " << new_cost << ". Accept.\n";
+            }
+            else{
+                prob = rand() / (RAND_MAX + 1.0);
+                if(prob < 0.2){
+                    if(print) cout << "Best cost = " << bestCost << ", New cost = " << new_cost << ". Accept with probability.\n";
+                }
+                else{
+                    if(print) cout << "Best cost = " << bestCost << ", New cost = " << new_cost << ". Reject.\n";
+                    _modifyOrder(toChange, idx);
+                }
+            }
+        }
+    }
+}
+void Manager::_findGreatStartPoint(bool print){
+    double bestCost = numeric_limits<double>::max();
+    double currCost;
+    for(int i=0; i<30; ++i){
+        Vehicle* dummy;
+        _changeOnePath(dummy, print);
+        currCost = _computeCost();
+        if(print) cout << "Curr. cost = " << currCost << " best cost = " << bestCost << "\n";
+        if(currCost < bestCost){
+            _updateBestSolution();
+            bestCost = currCost;
+            //if(print) _printExtractedGraph();
+        }
+    }
+    if(print) cout << "Restore:\n";
+    _restoreBestSolution();
+    //if(print) _printExtractedGraph();
+    currCost = _computeCost();
+    if(print) cout << currCost << "\n";
+}
+void Manager::_permutation(bool print){
+    double cost;
+    for(int i=0; i<5; ++i){
+        //_changeOnePriority(print);
+        //cost = _computeCost();
+        //cout << "cost = " << cost << "\n";
+    }
+}
+void Manager::_changeOnePath(Vehicle*& change, bool print){
+    Vehicle* v;
+    int id;
+    do{
+        id = rand()%(_numVehicles);
+    }while(_vehicles[id]->_type == Trajectory_type::ON_TO_ON);
+    v = _vehicles[id];
+    v->_prevChangePoints.clear();
+    v->_prevChangePoints.resize(0);
+    for(size_t k=0; k<v->_changePoints.size(); ++k){
+        v->_prevChangePoints.push_back(v->_changePoints[k]);
+    }
+    _determineChangePoints(v, print);
+    _disableTrajectory(v);
+    _enableTrajectory(v);
+    if(print) _printExtractedGraph();
+    change = v;
+}
+void Manager::_changeOnePriority(Lane*& change, int& idx, bool print){
+    Lane* lane;
+    int laneId;
+    do{
+        laneId = rand()%(_numLanes);
+    }while(_lanes[laneId]->_passVehicles.size()<=1);
+    lane = _lanes[laneId];
+    int changeIdx;
+    do{
+        changeIdx = rand()%(lane->_order.size()-1);
+    }while(!_isPriorityChangingValid(lane, changeIdx, print));
+    if(print) cout << "Change lane " << laneId << ", idx = " << changeIdx << "\n";
+    _modifyOrder(lane, changeIdx, print);
+    change = lane;
+    idx = changeIdx;
+}
+bool Manager::_isPriorityChangingValid(Lane* lane, int changeIdx, bool print){
+    Vehicle* v1 = _vehicles[lane->_order[changeIdx]];
+    Vehicle* v2 = _vehicles[lane->_order[changeIdx+1]];
+    if(v1->_incomingLane == v2->_incomingLane){
+        if(v1->_incomingLane == lane->_idx){
+            assert(v1->_earliestAT <= v2->_earliestAT);
+            if(print) cout << "Conflict " << v1->_id << " " << v2->_id << "\n";
+            return false;
+        }
+        else{
+            //May or may not change
+        }
+    }
+    for(int k=0; k<_numDiscretePoints; ++k){
+        Point* point = lane->_points[k];
+        if(point->_vehicleID2Node.find(v1->_id) != point->_vehicleID2Node.end() && 
+           point->_vehicleID2Node.find(v2->_id) != point->_vehicleID2Node.end()){
+            Node* n1 = point->_vehicleID2Node[v1->_id];
+            Node* n2 = point->_vehicleID2Node[v2->_id];
+            set<Node*> checkSet;
+            for(size_t i=0; i<n1->_outCrossLaneConsEdges.size(); ++i){
+                checkSet.insert(n1->_outCrossLaneConsEdges[i]->_v);
+            }
+            for(size_t i=0; i<n2->_inCrossLaneConsEdges.size(); ++i){
+                if(checkSet.find(n2->_inCrossLaneConsEdges[i]->_u) != checkSet.end()){
+                    if(print){
+                        cout << "Conflict ";
+                        n1->print(); cout << " ";
+                        n2->print(); cout << "\n";
+                    }
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+void Manager::_modifyOrder(Lane* lane, int idx, bool print){ //modify lane->_order and the same lane constraint edges
+    Vehicle* v1 = _vehicles[lane->_order[idx]];
+    Vehicle* v2 = _vehicles[lane->_order[idx+1]];
+    for(int k=0; k<_numDiscretePoints; ++k){
+        Point* point = lane->_points[k];
+        if(point->_vehicleID2Node.find(v1->_id) != point->_vehicleID2Node.end() && 
+           point->_vehicleID2Node.find(v2->_id) != point->_vehicleID2Node.end()){
+            Node* n1 = point->_vehicleID2Node[v1->_id];
+            Node* n2 = point->_vehicleID2Node[v2->_id];
+            Edge* discard = 0;
+            for(size_t i=0; i<n1->_outSameLaneConsEdges.size(); ++i){
+                if(n1->_outSameLaneConsEdges[i]->_v == n2){
+                    discard = n1->_outSameLaneConsEdges[i];
+                    n1->_outSameLaneConsEdges.erase(n1->_outSameLaneConsEdges.begin()+i);
+                    break;
+                }
+            }
+            for(size_t i=0; i<n2->_inSameLaneConsEdges.size(); ++i){
+                if(n2->_inSameLaneConsEdges[i]->_u == n1){
+                    n2->_inSameLaneConsEdges.erase(n2->_inSameLaneConsEdges.begin()+i);
+                    break;
+                }
+            }
+            assert(discard != 0);
+            delete discard;
+            Edge* new_edge = new Edge(n2, n1, Edge_type::SAME_LANE_CONSTRAINT, _tSS);
+            n2->_outSameLaneConsEdges.push_back(new_edge);
+            n1->_inSameLaneConsEdges.push_back(new_edge);
+        }
+    }
+    int temp = lane->_order[idx];
+    lane->_order[idx] = lane->_order[idx+1];
+    lane->_order[idx+1] = temp;
+    if(print){
+        _printExtractedGraph();
+    }
+}
+void Manager::_changeOneCrossLaneConstraint(bool print){
+    //TODO
 }

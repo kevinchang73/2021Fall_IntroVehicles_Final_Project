@@ -49,6 +49,10 @@ public:
     vector< vector<Node*> > _nodes; //from incoming lane to exit lane(s)
     //solution
     vector<int> _changePoints;
+    //best solution
+    vector<int> _bestChangePoints;
+    //previous solution
+    vector<int> _prevChangePoints;
 };
 
 class Node
